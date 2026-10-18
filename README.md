@@ -2,7 +2,7 @@
 
 [English](#english) | [中文](#中文)
 
-当前版本：[v1.0.0](https://github.com/JohnSong95/view_transfer/releases/tag/v1.0.0)
+当前版本：[v1.0.1](https://github.com/JohnSong95/view_transfer/releases/tag/v1.0.1)
 
 <a name="中文"></a>
 ## 中文
