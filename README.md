@@ -2,6 +2,8 @@
 
 [English](#english) | [中文](#中文)
 
+当前版本：[v1.0.0](https://github.com/JohnSong95/view_transfer/releases/tag/v1.0.0)
+
 <a name="中文"></a>
 ## 中文
 
@@ -32,6 +34,7 @@ view_transfer/
 ├── collect_data.py      # 批量采集编排 + 逆管线验证 + 统计清单
 ├── dataset_loader.py    # NumPy / PyTorch 数据集加载器
 ├── examples/            # 单个已验证样本（可直接查看数据格式）
+├── mesh.x / calibration_image.png   # legacy 流程示例：Pointwise 网格 + 标定照片
 ├── read_mesh.py / get_p.py / file_output.py / ...   # 旧实测处理管线
 └── requirements.txt
 ```
@@ -72,8 +75,9 @@ python dataset_loader.py dataset_demo
 ```
 
 也可以直接打开 `dataset_demo/sample_000000/input_view.png`（模型输入）与
-`target_planar.png`（训练目标）肉眼比对；`examples/` 目录下有一份带完整标注的
-单样本示例，可先浏览它了解数据长什么样。
+`target_planar.png`（训练目标）肉眼比对；`examples/` 目录下有一份已验证的
+单样本示例（为控制仓库体积，省略了 `mesh.x` 与 `target_planar.plt`，其余
+文件齐全），可先浏览它了解数据长什么样。
 
 **第 3 步：正式采集**
 
@@ -374,7 +378,9 @@ parent = Path(r'*')       # 试验数据根目录；脚本自动扫描其中含"
    `P` 映射到照片、双线性插值取值，展开结果写为该文件夹下的 `new_h.plt`
    （可用 Tecplot 打开）。
 
-`data/`、`data1/` 中的原始试验 `.plt/.tiff` 数据体积较大，未随仓库分发。
+`data/`、`data1/` 中的原始试验 `.plt/.tiff` 数据体积较大，未随仓库分发；
+但仓库根目录已附带一个示例 `mesh.x`（Pointwise 结构化网格）与标定照片
+`calibration_image.png`，可直接查看这两种文件的格式。
 
 ### 格式转换小工具
 
@@ -453,7 +459,9 @@ collect(n_samples=200, out_dir='dataset_200', image_size=256,
 
 ~8.5 s and ~4 MB per sample at 256/192 resolution on CPU. Samples are written one by
 one, so an interrupted run loses nothing; rerunning with the same `--seed` and `--out`
-overwrites/patches in place.
+overwrites/patches in place. Note: collection (`collect`) needs only numpy + pillow;
+the legacy workflow and the conversion tools additionally need matplotlib (see the
+respective sections below).
 
 ### Data format
 
@@ -462,8 +470,9 @@ background), `target_planar.npy` (float32 unwrapped planar target), `view_mask.p
 `depth.npy`, `mesh.x`, and `meta.json` (geometry labels + camera K/R/t/P + field
 parameters + verification metrics), plus Tecplot and PNG previews. The dataset root has
 `manifest.jsonl` (per-sample paths and metrics), `dataset_stats.json` (global
-normalization statistics), and `dataset_config.json`. A fully annotated sample is
-included under [`examples/`](examples/).
+normalization statistics), and `dataset_config.json`. A verified sample is included
+under [`examples/`](examples/) (`mesh.x` and the Tecplot file are omitted there to
+keep the repo small; the remaining files are complete).
 
 ### Loading
 
@@ -533,4 +542,7 @@ point-picking window): configure `PS_PT` (six 3-D marker coordinates), `fig_dir`
 (calibration photo), `mesh_file`, and `parent` (data root; subfolders are scanned
 automatically) in `legacy_main()`, click the six markers in the photo in order,
 confirm with `1` at the prompt, and every scanned folder reads its `h.plt` and
-gets an unwrapped `new_h.plt`. Licensed under the [MIT License](LICENSE).
+gets an unwrapped `new_h.plt`. The original experimental `.plt/.tiff` data are not
+redistributed, but the repo root ships an example `mesh.x` (Pointwise structured
+grid) and `calibration_image.png` for format reference. Licensed under the
+[MIT License](LICENSE).
