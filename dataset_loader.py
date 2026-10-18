@@ -8,7 +8,7 @@
     input  : (1, H, W) float32  相机透视物理量（normalize=True 时为标准化值，
                                 背景始终为 0）
     mask   : (1, H, W) float32  曲面可见 mask
-    target : (1, ny, nx) float32 平面展开物理量真值
+    target : (1, nx, ny) float32 平面展开物理量真值（与 target_planar.npy 一致）
     meta   : dict（含几何参数、相机 P 等标签，可用于物理约束损失/条件输入）
 
 数据划分：按 manifest 顺序 8:1:1，也可自行传入 sample 列表。

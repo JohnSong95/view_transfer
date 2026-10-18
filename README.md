@@ -14,7 +14,7 @@
                                         │
 平面物理标量场真值 (低频团 + 梯度 + 气膜孔射流尾迹) ─ 曲面参数化映射 ──> 平面图 (训练目标 Y)
                                         │
-                  独立逆管线（P 矩阵 DLT 反算，复刻实测标定流程）──> RMSE / 相关系数验证
+                  独立逆管线（P 矩阵投影 + 插值，复刻实测处理流程）──> RMSE / 相关系数验证
 ```
 
 在 1000 个随机样本上的实测指标：逆管线反算归一化 RMSE 均值约 **1.1%**，真值/反算
@@ -50,7 +50,9 @@ pip install -r requirements.txt        # numpy + pillow
 pip install torch
 ```
 
-不需要编译，克隆后即可运行。
+不需要编译，克隆后即可运行。注意：数据采集（`collect`）只需 numpy 与 pillow；
+**旧流程 `legacy` 与格式转换小工具另需 matplotlib**（legacy 交互取点还需要桌面
+环境），见下文对应章节。
 
 ### 快速开始：三步上手
 
@@ -60,7 +62,7 @@ pip install torch
 python main.py collect --samples 10 --out dataset_demo --seed 0
 ```
 
-结束时终端会打印每个样本的可见率与反算 RMSE，以及全数据集统计。
+运行中每 5 个样本打印一次进度（可见率、反算 RMSE），结束时打印全数据集统计。
 
 **第 2 步：检查生成结果**
 
@@ -86,7 +88,7 @@ python main.py collect --samples 1000 --out dataset_run --image-size 256 --grid 
 |---|---|---|
 | `--samples N` | 100 | 样本数量 |
 | `--out DIR` | dataset | 输出目录（建议每次运行用独立目录） |
-| `--seed` | 0 | 随机种子；每个样本实际使用 seed+i，保证可复现 |
+| `--seed` | 0 | 随机种子；同参数重跑可复现（每样本实际种子记录在 `meta.json` 的 `seed` 字段） |
 | `--image-size` | 256 | 透视图分辨率（像素，正方形） |
 | `--grid NX NY` | 192 192 | 曲面网格/平面真值分辨率（NX=弦向, NY=展向） |
 | `--min-visibility` | 0.35 | 曲面像素占画面最小比例，过低（掠射视角）自动重采机位 |
@@ -137,8 +139,10 @@ collect(
 
 ```json
 {"sample_id": "sample_000000", "dir": "dataset_run/sample_000000",
- "input_view": "dataset_run/sample_000000/input_view.npy", "mask": ".../view_mask.png",
- "depth": ".../depth.npy", "target": ".../target_planar.npy", "mesh": ".../mesh.x",
+ "input_view": "dataset_run/sample_000000/input_view.npy",
+ "input_png": ".../input_view.png", "mask": ".../view_mask.png",
+ "depth": ".../depth.npy", "target": ".../target_planar.npy",
+ "target_png": ".../target_planar.png", "mesh": ".../mesh.x",
  "meta": ".../meta.json", "visibility": 0.409, "value_min": 0.135, "value_max": 0.942,
  "verification": {"verify_nodes": 33095, "verify_rmse": 0.00806,
                   "verify_rmse_norm": 0.00999, "verify_corr": 0.99790}}
@@ -154,7 +158,7 @@ collect(
 |---|---|
 | `geometry` | 几何标签：`L` 弦长、`W` 展宽、`camber` 弯度、`span_bend` 展向弯曲、`twist0/twist1` 扭转（弧度）、`waviness` 波纹模态（可作为条件输入/物理约束标签） |
 | `camera` | `P`（3×4 DLT 投影矩阵，像素坐标 x 向右、y 向下）、`K` 内参、`R`/`t` 外参、`eye` 相机位置、`fov_deg`/`azimuth_deg`/`elevation_deg`/`roll_deg`/`distance` |
-| `field` | 物理场参数：高斯团 `bumps`、线性梯度 `grad`、气膜孔排 `streak_rows`（孔位、衰减长度、条带宽度、幅值） |
+| `field` | 物理场参数：高斯团 `bumps`、线性梯度 `grad`、气膜孔排 `streak_rows`（孔排位置 `u0`、孔数 `n_holes`、衰减长度、条带宽度、幅值） |
 | `planar_grid` | 平面真值网格的起点坐标与步长（`XX00`/`YY00`/`dx`/`dy`） |
 | `visibility` | 该视角下曲面像素占画面比例 |
 | `verification` | 逆管线验证指标（见下文） |
@@ -287,9 +291,9 @@ P = np.asarray(meta['camera']['P'])         # 3×4 DLT 投影矩阵
 
 ### 物理一致性验证
 
-采集器对每个样本复用**实测数据处理管线**（`file_output.py` 的 DLT 反算 + Tecplot
-读写），由透视图和 `P` 反推平面场，与真值比较，指标写入 `meta.json` 与
-`manifest.jsonl`：
+采集器对每个样本复用**实测数据处理管线**（`file_output.py`：mesh 点经 `P` 投影到
+照片 + 双线性插值 + Tecplot 读写），由透视图和 `P` 反推平面场，与真值比较，
+指标写入 `meta.json` 与 `manifest.jsonl`：
 
 | 指标 | 含义 | 参考基线 |
 |---|---|---|
@@ -341,7 +345,8 @@ field_gen.FIELD_RANGES['out_high'] = (0.8, 1.0)
 
 ### 旧流程：实测照片的手工标定展开
 
-除数据采集外，本仓库保留了原有的实测处理流程（交互式选标定标记点）：
+除数据采集外，本仓库保留了原有的实测处理流程（交互式选标定标记点）。
+**依赖 matplotlib（交互取点窗口，需桌面环境）**：
 
 ```bash
 python main.py legacy
@@ -364,7 +369,8 @@ parent = Path(r'*')       # 试验数据根目录；脚本自动扫描其中含"
 3. 弹出标定照片窗口，按 `PS_PT` 的顺序依次点击 6 个对应标记点；
 4. 终端提示 `Whether tranformation satisfied? 0 or 1:`——输入 `0` 重新取点，
    输入 `1` 确认变换并继续；
-5. 程序对扫描到的每个试验文件夹读取场数据文件（`h`），将 mesh 各点经投影矩阵
+5. 程序对扫描到的每个试验文件夹读取场数据文件 `h.plt`（代码中传 `h`，
+   `read_file` 自动补 `.plt` 后缀），将 mesh 各点经投影矩阵
    `P` 映射到照片、双线性插值取值，展开结果写为该文件夹下的 `new_h.plt`
    （可用 Tecplot 打开）。
 
@@ -372,8 +378,9 @@ parent = Path(r'*')       # 试验数据根目录；脚本自动扫描其中含"
 
 ### 格式转换小工具
 
-两个独立的命令行小工具（依赖 matplotlib，rgb/float 模式另需 tifffile；
-均不在 `requirements.txt` 中，按需安装）：
+两个独立的命令行小工具（不在 `requirements.txt` 中，按需安装）：
+`plt_to_tiff.py` 依赖 matplotlib；`csv_to_tiff.py` 的 gray 模式只需
+numpy + pillow，rgb/float 模式另需 matplotlib 与 tifffile：
 
 ```bash
 # Tecplot .plt -> 彩色 TIFF
@@ -400,8 +407,9 @@ python csv_to_tiff.py input.csv output.tiff [--mode rgb] [--cmap jet] [--vmin ..
 | `render.py` | 逐像素光线-分片双线性曲面 Newton 求交，含自遮挡处理 |
 | `collect_data.py` | 批量采集编排、配对落盘、逆管线验证、统计与清单 |
 | `dataset_loader.py` | NumPy/PyTorch 数据集、标准化、train/val/test 划分 |
-| `read_mesh.py` `get_p.py` `file_output.py` | 旧管线：网格读取、手工标定、DLT 反算展开 |
-| `read_file.py` `tecplot.py` | Tecplot 文本网格/场数据读写 |
+| `curve_flat.py` | 旧流程主函数：标定 P 后逐文件夹展开（`main.py legacy` 调用） |
+| `read_mesh.py` `get_p.py` `file_output.py` | 旧管线：mesh.x 读取、点选 6 点标定 P、投影插值展开 |
+| `read_file.py` `tecplot.py` | Tecplot 文本场数据读写（`read_file` 读 / `tecplot` 写） |
 | `plt_to_tiff.py` `csv_to_tiff.py` `check_output.py` | 格式转换与结果检查小工具 |
 
 ### 许可证
@@ -463,7 +471,7 @@ included under [`examples/`](examples/).
 from dataset_loader import NumpySurfaceDataset
 
 train, val, test = NumpySurfaceDataset('dataset_run').split((0.8, 0.1, 0.1))
-item = train[0]                # dict: input (1,H,W), mask (1,H,W), target (1,ny,nx), ...
+item = train[0]                # dict: input (1,H,W), mask (1,H,W), target (1,nx,ny), ...
 ```
 
 With PyTorch installed:
@@ -503,8 +511,9 @@ python csv_to_tiff.py input.csv output.tiff [--mode rgb] [--cmap jet] [--vmin ..
 ```
 
 These need matplotlib (plus tifffile for rgb/float modes), which is not in
-`requirements.txt`. `check_output.py` exposes a `check_output(C, P, mesh_file)`
-function for visually inspecting calibration quality.
+`requirements.txt`; the gray mode of `csv_to_tiff.py` needs only numpy + pillow.
+`check_output.py` exposes a `check_output(C, P, mesh_file)` function for visually
+inspecting calibration quality.
 
 ### Customization
 
@@ -519,8 +528,9 @@ geometry.GEOM_RANGES['L'] = (100.0, 140.0)   # restrict chord length to 100–14
 ### Legacy workflow
 
 The interactive calibration/unwrapping workflow for real photographs is kept under
-`python main.py legacy`: configure `PS_PT` (six 3-D marker coordinates), `fig_dir`
+`python main.py legacy` (needs matplotlib and a desktop environment for the
+point-picking window): configure `PS_PT` (six 3-D marker coordinates), `fig_dir`
 (calibration photo), `mesh_file`, and `parent` (data root; subfolders are scanned
 automatically) in `legacy_main()`, click the six markers in the photo in order,
-confirm with `1` at the prompt, and every scanned folder gets an unwrapped
-`new_h.plt`. Licensed under the [MIT License](LICENSE).
+confirm with `1` at the prompt, and every scanned folder reads its `h.plt` and
+gets an unwrapped `new_h.plt`. Licensed under the [MIT License](LICENSE).
