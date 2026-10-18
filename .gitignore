@@ -1,0 +1,27 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ---- vendored dependencies / local tooling ----
+.pylibs/
+.tools/
+.trae/
+
+# ---- generated training datasets (regenerate with `python main.py collect`) ----
+dataset/
+dataset_*/
+latest_run.txt
+*.runid
+collect_*.log
+
+# ---- original experimental data (large, not redistributed) ----
+data/
+data1/
+*.tiff
+
+# ---- temp ----
+.tmp/
+*.tmp
+*.bak
