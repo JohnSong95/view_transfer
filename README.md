@@ -222,6 +222,34 @@ for batch in loader:
     ...
 ```
 
+#### 典型训练循环（示意）
+
+仓库本身不包含网络定义，下面是一个最小的回归训练骨架，展示输入/目标如何
+接入任意 image-to-image 网络（如 U-Net）：
+
+```python
+import torch
+from torch.utils.data import DataLoader
+from dataset_loader import NumpySurfaceDataset, TorchSurfaceDataset
+
+train_np = NumpySurfaceDataset('dataset_run', load_meta=False).split()[0]
+loader = DataLoader(TorchSurfaceDataset(train_np), batch_size=16, shuffle=True)
+
+model = MyUnwrapNet().cuda()         # 你的网络：输入 (B,1,256,256) -> 输出 (B,1,192,192)
+opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+for epoch in range(100):
+    for batch in loader:
+        x, y = batch['input'].cuda(), batch['target'].cuda()   # 均已标准化
+        loss = torch.nn.functional.mse_loss(model(x), y)       # 背景已置 0，无需额外屏蔽
+        opt.zero_grad(); loss.backward(); opt.step()
+```
+
+提示：`input` 的背景恒为 0（标准化仅作用于曲面区域），如需显式屏蔽背景损失，
+可用 `batch['mask']`；如需物理量纲的损失（如相对误差），先把预测与目标乘回
+`ds.tg_std`、加回 `ds.tg_mean`。`meta.json` 中的几何/相机参数也可取出来做
+条件输入或物理约束项。
+
 #### 按质量筛选样本
 
 `manifest.jsonl` 逐样本记录了验证指标，可在加载前过滤掉个别极端样本：
@@ -319,9 +347,47 @@ field_gen.FIELD_RANGES['out_high'] = (0.8, 1.0)
 python main.py legacy
 ```
 
-流程说明（原始 `readme.txt`）：在 Pointwise 中绘制曲面网格导出 `mesh.x` → 将标记点
-坐标写入 `main.py` 的 `PS_PT` 变量 → `fig_dir` 指向标定照片 → 选取对应点并确认变换。
+`main.py` 的 `legacy_main()` 中有 4 个变量需要按你的试验配置：
+
+```python
+PS_PT = np.array([...])   # 6 个标定标记点的 3D 坐标 (X, Y, Z)，顺序须与图像上点击顺序一致
+fig_dir = r'*.tiff'       # 标定照片路径
+mesh_file = 'mesh.x'      # Pointwise 导出的曲面网格
+parent = Path(r'*')       # 试验数据根目录；脚本自动扫描其中含"吸力面"的末级子目录
+```
+
+完整流程（对应原始 `readme.txt`）：
+
+1. 在 Pointwise 中绘制曲面网格，导出为 `mesh.x`，并量取 6 个标记点的三维坐标
+   填入 `PS_PT`；
+2. 配置上述 4 个变量后运行 `python main.py legacy`；
+3. 弹出标定照片窗口，按 `PS_PT` 的顺序依次点击 6 个对应标记点；
+4. 终端提示 `Whether tranformation satisfied? 0 or 1:`——输入 `0` 重新取点，
+   输入 `1` 确认变换并继续；
+5. 程序对扫描到的每个试验文件夹读取场数据文件（`h`），将 mesh 各点经投影矩阵
+   `P` 映射到照片、双线性插值取值，展开结果写为该文件夹下的 `new_h.plt`
+   （可用 Tecplot 打开）。
+
 `data/`、`data1/` 中的原始试验 `.plt/.tiff` 数据体积较大，未随仓库分发。
+
+### 格式转换小工具
+
+两个独立的命令行小工具（依赖 matplotlib，rgb/float 模式另需 tifffile；
+均不在 `requirements.txt` 中，按需安装）：
+
+```bash
+# Tecplot .plt -> 彩色 TIFF
+python plt_to_tiff.py input.plt [output.tiff] [--cmap jet]
+# output 省略时默认为 input_color.tiff
+
+# CSV 网格数据 -> TIFF
+python csv_to_tiff.py input.csv output.tiff [--mode rgb] [--cmap jet] [--vmin .. --vmax ..]
+# --mode: gray=8bit 灰度 / float=float32 原值 / rgb=彩色（默认，色标自动取 1%~99% 分位）
+```
+
+`check_output.py` 不是命令行工具，它提供 `check_output(C, P, mesh_file)`
+函数：把 mesh 点经 `P` 投影、从图像 `C` 双线性插值后用等值线图可视化，
+用于人工检查标定质量（采集器验证管线内部也复用了同样的投影插值逻辑）。
 
 ### 模块说明
 
@@ -418,6 +484,28 @@ recs = [json.loads(l) for l in open('dataset_run/manifest.jsonl', encoding='utf-
 good = [r for r in recs if r.get('verification', {}).get('verify_rmse_norm', 0) < 0.03]
 ```
 
+A minimal training-loop skeleton (the repo ships no network definition):
+
+```python
+model = MyUnwrapNet().cuda()   # any image-to-image net, (B,1,256,256) -> (B,1,192,192)
+opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+for batch in loader:
+    x, y = batch['input'].cuda(), batch['target'].cuda()   # already standardized
+    loss = torch.nn.functional.mse_loss(model(x), y)       # background is 0, no masking needed
+    opt.zero_grad(); loss.backward(); opt.step()
+```
+
+### CLI conversion tools
+
+```bash
+python plt_to_tiff.py input.plt [output.tiff] [--cmap jet]   # Tecplot .plt -> color TIFF
+python csv_to_tiff.py input.csv output.tiff [--mode rgb] [--cmap jet] [--vmin .. --vmax ..]
+```
+
+These need matplotlib (plus tifffile for rgb/float modes), which is not in
+`requirements.txt`. `check_output.py` exposes a `check_output(C, P, mesh_file)`
+function for visually inspecting calibration quality.
+
 ### Customization
 
 Sampling ranges live at the top of `geometry.py` (`GEOM_RANGES`), `camera.py`
@@ -428,5 +516,11 @@ import geometry
 geometry.GEOM_RANGES['L'] = (100.0, 140.0)   # restrict chord length to 100–140 mm
 ```
 
-The legacy interactive calibration/unwrapping workflow for real photographs is kept
-under `python main.py legacy`. Licensed under the [MIT License](LICENSE).
+### Legacy workflow
+
+The interactive calibration/unwrapping workflow for real photographs is kept under
+`python main.py legacy`: configure `PS_PT` (six 3-D marker coordinates), `fig_dir`
+(calibration photo), `mesh_file`, and `parent` (data root; subfolders are scanned
+automatically) in `legacy_main()`, click the six markers in the photo in order,
+confirm with `1` at the prompt, and every scanned folder gets an unwrapped
+`new_h.plt`. Licensed under the [MIT License](LICENSE).
