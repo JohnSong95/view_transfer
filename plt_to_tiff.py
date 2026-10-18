@@ -1,12 +1,17 @@
-"""将 data1/Eta.plt 转换为彩色 TIFF 图片。
+"""将 Tecplot .plt 文件转换为彩色 TIFF 图片。
 
 用法:
-    python plt_to_tiff.py
+    python plt_to_tiff.py input.plt [output.tiff] [--cmap jet]
+
+依赖 matplotlib（颜色映射）；tifffile 不需要。
 """
 import os
 import re
+import sys
+import argparse
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '.pylibs'))
 import numpy as np
-import matplotlib.pyplot as plt
 
 
 def plt_to_tiff(input_path, output_path, cmap='jet'):
@@ -18,6 +23,8 @@ def plt_to_tiff(input_path, output_path, cmap='jet'):
     output_path : str  输出的 .tiff 路径
     cmap : str         matplotlib 颜色映射名称（如 'jet', 'turbo', 'viridis'）
     """
+    import matplotlib.pyplot as plt
+
     print(f'Reading: {input_path}')
     # 从 ZONE 行解析 I, J 维度
     with open(input_path, 'r') as f:
@@ -83,7 +90,13 @@ def plt_to_tiff(input_path, output_path, cmap='jet'):
 
 
 if __name__ == '__main__':
-    folder = r'C:\Users\A\Documents\xwechat_files\wxid_39s4apaf1sug21_ea81\msg\file\2026-08\传热系数csv\传热系数csv\叶栅-主流湍流度5%\压力面前缘与第二排孔区域视角\叶栅试验件0-压力面原始状态\air密度比1.0\吹风比1.5'
-    in_file = os.path.join(folder, 'h.plt')
-    out_file = os.path.join(folder, 'h_color.tiff')
-    plt_to_tiff(in_file, out_file, cmap='jet')
+    parser = argparse.ArgumentParser(description='将 Tecplot .plt 转换为彩色 TIFF 图片')
+    parser.add_argument('input', help='输入 .plt 文件路径')
+    parser.add_argument('output', nargs='?', default=None,
+                        help='输出 .tiff 路径（默认与输入同名，后缀 _color.tiff）')
+    parser.add_argument('--cmap', default='jet',
+                        help='颜色映射名称（如 jet, turbo, viridis）')
+    args = parser.parse_args()
+
+    out_file = args.output or os.path.splitext(args.input)[0] + '_color.tiff'
+    plt_to_tiff(args.input, out_file, cmap=args.cmap)
